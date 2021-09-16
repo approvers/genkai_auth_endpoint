@@ -41,6 +41,27 @@ async fn handle(
     status.map_err(|e| warp::reject::custom(InternalError(e)))
 }
 
+#[derive(Debug)]
+struct InternalError(Error);
+impl warp::reject::Reject for InternalError {}
+impl From<Error> for InternalError {
+    fn from(e: Error) -> Self {
+        InternalError(e)
+    }
+}
+
+async fn recover(e: Rejection) -> Result<impl Reply, Rejection> {
+    if let Some(InternalError(e)) = e.find() {
+        tracing::error!("{:#?}", e);
+        return Ok(with_status(
+            error_json("Internal Server Error"),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ));
+    }
+
+    Err(e)
+}
+
 fn inject<T: Send + Sync + Clone>(v: T) -> impl Filter<Extract = (T,), Error = Infallible> + Clone {
     warp::any().map(move || v.clone())
 }
