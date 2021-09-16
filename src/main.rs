@@ -1,3 +1,45 @@
+async fn handle(
+    auth_header: String,
+    db: Collection<GenkaiAuthData>,
+) -> Result<impl Reply, Rejection> {
+    let status: Result<_, _> = try {
+        let token = match auth_header.strip_prefix("Bearer ") {
+            Some(t) => t,
+            None => {
+                return Ok(with_status(
+                    error_json("Authorization header must begin with \"Bearer\""),
+                    StatusCode::BAD_REQUEST,
+                ))
+            }
+        };
+
+        let mut hasher = Sha512::new();
+        hasher.update(token.trim());
+        let token = hasher.finalize();
+        let token = hex::encode(token);
+
+        let entry = match db
+            .find_one(doc! { "token": token }, None)
+            .await
+            .context("failed to find")?
+        {
+            Some(u) => u,
+            None => {
+                return Ok(with_status(
+                    error_json("Invalid token"),
+                    StatusCode::UNAUTHORIZED,
+                ))
+            }
+        };
+
+        with_status(
+            format!(r#"{{"user_id":"{}"}}"#, entry.user_id),
+            StatusCode::OK,
+        )
+    };
+
+    status.map_err(|e| warp::reject::custom(InternalError(e)))
+}
 
 fn inject<T: Send + Sync + Clone>(v: T) -> impl Filter<Extract = (T,), Error = Infallible> + Clone {
     warp::any().map(move || v.clone())
