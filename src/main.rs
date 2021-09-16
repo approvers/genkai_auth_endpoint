@@ -1,3 +1,61 @@
+#![feature(try_blocks)]
+
+use std::convert::Infallible;
+
+use anyhow::{Context as _, Error, Result};
+use mongodb::{bson::doc, options::ClientOptions, Client, Collection};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
+use warp::http::StatusCode;
+use warp::reply::with_status;
+use warp::{Filter, Rejection, Reply};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct GenkaiAuthData {
+    user_id: String,
+    pgp_pub_key: Option<String>,
+    token: Option<String>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
+
+    let use_ansi = env_var("NO_COLOR").is_err();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_ansi(use_ansi)
+        .init();
+
+    let opt = ClientOptions::parse(&env_var("MONGO_AUTH_DB_URI")?)
+        .await
+        .context("failed to parse mongodb uri")?;
+
+    let db = Client::with_options(opt)
+        .context("failed to create mongodb client")?
+        .database("RustyPonyo")
+        .collection::<GenkaiAuthData>("GenkaiAuth");
+
+    let route = warp::path!("v1" / "auth")
+        .and(warp::post())
+        .and(warp::header("Authorization"))
+        .and(inject(db))
+        .and_then(handle)
+        .recover(recover)
+        .with(warp::trace::request());
+
+    let port = env_var("PORT")
+        .ok()
+        .map(|x| x.parse().context("failed to parse PORT env var"))
+        .transpose()?
+        .unwrap_or(3000);
+
+    warp::serve(route).bind(([0, 0, 0, 0], port)).await;
+
+    Ok(())
+}
+
 async fn handle(
     auth_header: String,
     db: Collection<GenkaiAuthData>,
