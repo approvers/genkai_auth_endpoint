@@ -17,6 +17,11 @@ struct GenkaiAuthData {
     token: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct Request {
+    token: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
@@ -39,7 +44,8 @@ async fn main() -> Result<()> {
 
     let route = warp::path!("v1" / "auth")
         .and(warp::post())
-        .and(warp::header("Authorization"))
+        .and(warp::body::content_length_limit(1024 * 2))
+        .and(warp::body::json::<Request>())
         .and(inject(db))
         .and_then(handle)
         .recover(recover)
@@ -56,23 +62,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle(
-    auth_header: String,
-    db: Collection<GenkaiAuthData>,
-) -> Result<impl Reply, Rejection> {
+async fn handle(request: Request, db: Collection<GenkaiAuthData>) -> Result<impl Reply, Rejection> {
     let status: Result<_, _> = try {
-        let token = match auth_header.strip_prefix("Bearer ") {
-            Some(t) => t,
-            None => {
-                return Ok(with_status(
-                    error_json("Authorization header must begin with \"Bearer\""),
-                    StatusCode::BAD_REQUEST,
-                ))
-            }
-        };
-
         let mut hasher = Sha512::new();
-        hasher.update(token.trim());
+        hasher.update(request.token.trim());
         let token = hasher.finalize();
         let token = hex::encode(token);
 
